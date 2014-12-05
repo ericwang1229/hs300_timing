@@ -6,11 +6,23 @@ import csv
 import math
 from datetime import *
 import pprint
+import functools
+from matplotlib.dates import  DateFormatter, WeekdayLocator, HourLocator, \
+     DayLocator, MONDAY
 
 FOLDER_PATH = "C:\\New folder\\hs300_timing\\"
 FILE_EXTENSION = ".csv"
-DATA_FILE_NAMES = ["000928","000929","000930"]
-INDEX_HISTORY_FILE_NAME = "000931"
+DATA_FILE_NAMES = ["000908",
+                   "000909",
+                   "000910",
+                   "000911",
+                   "000912",
+                   "000913",
+                   "000914",
+                   "000915",
+                   "000916",
+                   "000917"]
+INDEX_HISTORY_FILE_NAME = "000300"
 DATE_INDEX = "Date"
 INIT_DATE = datetime(2009,1,1)
 END_DATE = datetime(2014,12,30)
@@ -31,31 +43,66 @@ class trades:
                                           "Note":note}])
     def position(self):
         return int(sum(self.trades["Lots"]))
-    def pnl(self, prices, on_index, price_index):
+    def pnl(self, prices, price_index):
         pnl = 0
         pos = 0
         max_pnl = 0
-        self.history = pd.merge(self.trades, prices, left_on="DateTime", right_on=on_index, how='outer')
+        self.history = pd.merge( prices,self.trades,on="DateTime",how='outer')
         for rn in range(0,len(self.history)):
             if not math.isnan(self.history.iloc[rn]["Lots"]):
                 pos += self.history.iloc[rn]["Lots"]
                 pnl -= self.history.iloc[rn]["Price"]*self.history.iloc[rn]["Lots"]
             if pos <> 0:
-                pnl += pnl*self.history.iloc[rn][price_index]
-            self.history.iloc[rn]["PnL"] = pnl
-            self.history.iloc[rn]["Pos"] = pos
+                pnl += pos*self.history.iloc[rn][price_index]
+            self.history.ix[rn, "PnL"] = pnl
+            self.history.ix[rn, "Pos"] = pos
             max_pnl = max_pnl if pnl<max_pnl else pnl
-            drawdown = 1-pnl/max_pnl
-            self.history.iloc[rn]["DrawDown"] = drawdown
+            if max_pnl == 0:
+                drawdown = 1.0
+            else:
+                drawdown = 1.0-pnl/max_pnl
+            self.history.ix[rn, "DrawDown"] = drawdown
     def pprint(self):
         pp = pprint.PrettyPrinter(indent=4)
-        pp.pprint(self.trades)        
-        
+        pp.pprint(self.trades)
+    def plot(self, ax=None):
+        date = self.history["DateTime"].tolist()
+        prices = self.history["000300.Close"].values.tolist()
+        buy_dates = [x["DateTime"] for i,x in self.history.iterrows() if x["Lots"]>0]
+        buy_prices = [x["Price"] for i,x in self.history.iterrows() if x["Lots"]>0]
+        sell_dates = [x["DateTime"] for i,x in self.history.iterrows() if x["Lots"]<0]
+        sell_prices = [x["Price"] for i,x in self.history.iterrows() if x["Lots"]<0]
+        pnl = self.history["PnL"].tolist()
+        if ax is None:
+            fig, (ax1, ax2) = plt.subplots(2, sharex=True)
+            mondays = WeekdayLocator(MONDAY)
+            mondays.MAXTICKS = 2000
+            alldays = DayLocator()              # minor ticks on the days
+            alldays.MAXTICKS = 2000
+            weekFormatter = DateFormatter('%b %d')  # e.g., Jan 12
+            dayFormatter = DateFormatter('%d')      # e.g., 12
+            ax1.xaxis.set_major_locator(mondays)
+            ax1.xaxis.set_minor_locator(alldays)
+            ax1.xaxis.set_major_formatter(weekFormatter)
+            
+            ax1.plot(date, prices)
+            ax1.plot(buy_dates, buy_prices, "^", markersize = 5, color='m')
+            ax1.plot(sell_dates, sell_prices, "v", markersize = 5, color='k')
+            ax2.plot(date, pnl)
+    
+            ax1.xaxis_date()
+            ax1.autoscale_view()
+            
+            plt.show()
+            
 def read_data(name, df=None):
     close_index = name+".Close"
     return_index = name+".Return"
     beta_index = name+".Beta"
-    temp_df = pd.read_csv(FOLDER_PATH+name+FILE_EXTENSION, delimiter="\t")
+    temp_df = pd.read_csv(FOLDER_PATH+name+FILE_EXTENSION,
+                          delimiter="\t",
+                          parse_dates=True,
+                          date_parser=functools.partial(datetime.strptime, format = "%Y/%m/%d"))
     temp_df.columns=[DATE_INDEX,
                      name+".Open",
                      name+".High",
@@ -100,9 +147,10 @@ for name in DATA_FILE_NAMES:
 ##print(df.head())
 
 orders = trades()
-df["Positive_Alpha_Ratio"] = 0
-df["Positive_Return_Ratio"] = 0
+df["Positive_Alpha_Ratio"] = 0.0
+df["Positive_Return_Ratio"] = 0.0
 for rn in range(0, len(df)):
+    df.ix[rn, "Date"] = pd.to_datetime(df.iloc[rn]["Date"])
     total_number_of_positive_alpha = 0
     total_number_of_positive_return = 0
     for name in DATA_FILE_NAMES:
@@ -112,8 +160,9 @@ for rn in range(0, len(df)):
     # Calculate number(percentage) of equities with positive return
         if df.iloc[rn][name+".Return"]>0:
             total_number_of_positive_return += 1
-    df.iloc[rn]["Positive_Alpha_Ratio"] = total_number_of_positive_alpha/len(DATA_FILE_NAMES)
-    df.iloc[rn]["Positive_Return_Ratio"] = total_number_of_positive_return/len(DATA_FILE_NAMES)
+    df.ix[rn, "Positive_Alpha_Ratio"] = total_number_of_positive_alpha/float(len(DATA_FILE_NAMES))
+    df.ix[rn, "Positive_Return_Ratio"] = total_number_of_positive_return/float(len(DATA_FILE_NAMES))
+
 get_average = lambda x: sum(x)/ROLLING_WINDOW
 df["Average_Alpha_Ratio"] = pd.rolling_apply(df["Positive_Alpha_Ratio"], ROLLING_WINDOW, get_average, min_periods=ROLLING_WINDOW)
 df["Average_Return_Ratio"] = pd.rolling_apply(df["Positive_Return_Ratio"], ROLLING_WINDOW, get_average, min_periods=ROLLING_WINDOW)
@@ -129,8 +178,10 @@ for rn in range(ROLLING_WINDOW, len(df)):
         orders.add(datetime=df.iloc[rn][DATE_INDEX],
                    price=df.iloc[rn][INDEX_HISTORY_FILE_NAME+".Close"],
                    lots=-1)
-        
-
+price_for_pnl = df[["Date","000300.Close"]]
+price_for_pnl.columns = ["DateTime", "000300.Close"]
+orders.pnl(price_for_pnl, price_index="000300.Close")
+orders.plot()
         
         
 
